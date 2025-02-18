@@ -1,80 +1,120 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import * as tf from "@tensorflow/tfjs";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
 
 const App = () => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [image, setImage] = useState(null);
+  const [predictions, setPredictions] = useState([]);
+  const imageRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
-    // Load the Pi SDK
-    const script = document.createElement("script");
-    script.src = "https://sdk.minepi.com/pi-sdk.js";
-    script.async = true;
-    script.onload = () => initializePiSDK();
-    document.body.appendChild(script);
+    const loadPiSDK = () => {
+      const script = document.createElement("script");
+      script.src = "https://sdk.minepi.com/pi-sdk.js";
+      script.onload = () => {
+        window.Pi.init({ version: "2.0" });
+      };
+      document.body.appendChild(script);
+    };
+    loadPiSDK();
   }, []);
 
-  const initializePiSDK = () => {
-    if (window.Pi) {
-      window.Pi.init({ version: "2.0", sandbox: true });
-      authenticateUser();
-    } else {
-      console.error("Pi SDK failed to load.");
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImage(e.target.result);
+      };
+      reader.readAsDataURL(file);
     }
+  };
+
+  const analyzeImage = async () => {
+    if (!imageRef.current) return;
+    const model = await cocoSsd.load();
+    const predictions = await model.detect(imageRef.current);
+    setPredictions(predictions);
   };
 
   const authenticateUser = () => {
     const scopes = ["payments"];
+    function onIncompletePaymentFound(payment) {
+      console.log("Incomplete Payment: ", payment);
+    }
 
-    window.Pi.authenticate(scopes, (payment) => {
-      console.log("Incomplete payment found:", payment);
-    })
+    window.Pi.authenticate(scopes, onIncompletePaymentFound)
       .then((auth) => {
-        setUser(auth.user);
-        setLoading(false);
+        console.log("User authenticated: ", auth);
       })
       .catch((error) => {
-        console.error("Authentication failed:", error);
-        setLoading(false);
+        console.error("Authentication failed: ", error);
       });
   };
 
-  const handlePayment = () => {
+  const requestPayment = () => {
     window.Pi.createPayment(
       {
-        amount: 1.0, // Amount in Pi
-        memo: "Test Payment", // Payment message
-        metadata: { orderId: 1234 }, // Custom data
+        amount: 0.1,
+        memo: "Photo Analysis Service",
+        metadata: {},
       },
       {
         onReadyForServerApproval: (paymentId) => {
-          console.log("Payment ready for approval:", paymentId);
+          console.log("Payment Ready for Approval: ", paymentId);
         },
         onReadyForServerCompletion: (paymentId, txid) => {
-          console.log("Payment completed:", paymentId, txid);
+          console.log("Payment Completed: ", paymentId, txid);
         },
         onCancel: (paymentId) => {
-          console.log("Payment canceled:", paymentId);
+          console.log("Payment Cancelled: ", paymentId);
         },
         onError: (error, payment) => {
-          console.error("Payment error:", error, payment);
+          console.error("Payment Error: ", error, payment);
         },
       }
     );
   };
 
   return (
-    <div>
-      <h1>Pi Network App</h1>
-      {loading ? (
-        <p>Loading...</p>
-      ) : user ? (
+    <div style={{ textAlign: "center", padding: "20px" }}>
+      <h2>Pi Network ML Image Analysis</h2>
+      <button onClick={authenticateUser}>Login with Pi</button>
+      <br /><br />
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/*"
+        onChange={handleFileChange}
+        style={{ display: "none" }}
+      />
+      <button onClick={() => fileInputRef.current.click()}>Upload Image</button>
+      {image && (
         <div>
-          <p>Welcome, {user.username}!</p>
-          <button onClick={handlePayment}>Pay 1 Pi</button>
+          <img
+            ref={imageRef}
+            src={image}
+            alt="Uploaded Preview"
+            style={{ maxWidth: "100%", marginTop: "20px" }}
+          />
+          <br />
+          <button onClick={analyzeImage}>Analyze Image</button>
+          <button onClick={requestPayment}>Pay with Pi</button>
         </div>
-      ) : (
-        <p>Authentication failed. Try reloading the page.</p>
       )}
+      <div>
+        {predictions.length > 0 && (
+          <div>
+            <h3>Analysis Results:</h3>
+            <ul>
+              {predictions.map((p, index) => (
+                <li key={index}>{`${p.class} (${Math.round(p.score * 100)}%)`}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
